@@ -1,0 +1,211 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation template for a Tiered Content Access Application with Cognito and S3.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: TieredContentApp
+
+  FrontendBucketName:
+    Type: String
+    Description: Name for the S3 bucket hosting the frontend web application.
+    Default: YOUR-FRONTEND-BUCKET-NAME-UNIQUE
+
+  ContentBucketName:
+    Type: String
+    Description: Name for the S3 bucket storing free and premium content.
+    Default: YOUR-CONTENT-BUCKET-NAME-UNIQUE
+
+  UserPoolName:
+    Type: String
+    Description: Name for the Cognito User Pool.
+    Default: YOUR-USER-POOL-NAME
+
+  IdentityPoolName:
+    Type: String
+    Description: Name for the Cognito Identity Pool.
+    Default: YOUR-IDENTITY-POOL-NAME
+
+Resources:
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref FrontendBucketName
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucketName
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
+            Action: "s3:GetObject"
+            Resource: !Join ["", ["arn:aws:s3:::", !Ref FrontendBucketName, "/*"]]
+
+  ContentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ContentBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Ref UserPoolName
+      AutoVerifiedAttributes:
+        - email
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: WebAppClient
+      UserPoolId: !Ref CognitoUserPool
+      ExplicitAuthFlows:
+        - ADMIN_NO_SRP_AUTH
+        - USER_PASSWORD_AUTH
+        - CUSTOM_AUTH_FLOW_ONLY
+      GenerateSecret: false
+
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Ref IdentityPoolName
+      AllowUnauthenticatedIdentities: true
+      CognitoIdentityProviders:
+        - ClientId: !Ref CognitoUserPoolClient
+          ProviderName: !GetAtt CognitoUserPool.ProviderName
+
+  CognitoAuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-CognitoAuthenticatedRole"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref CognitoIdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: authenticated
+      Policies:
+        - PolicyName: S3AuthenticatedAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !GetAtt ContentBucket.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Join ["", [!GetAtt ContentBucket.Arn, "/*"]]
+
+  CognitoUnauthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-CognitoUnauthenticatedRole"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref CognitoIdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: unauthenticated
+      Policies:
+        - PolicyName: S3UnauthenticatedAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Join ["", [!GetAtt ContentBucket.Arn, "/free/*"]]
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !GetAtt ContentBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - "free/*"
+                      - "free/"
+
+Outputs:
+  FrontendBucketWebsiteUrl:
+    Description: URL for the S3 bucket hosting the frontend website.
+    Value: !GetAtt FrontendBucket.WebsiteURL
+    Export:
+      Name: !Sub "${ProjectName}-FrontendBucketWebsiteUrl"
+
+  UserPoolId:
+    Description: The ID of the Cognito User Pool.
+    Value: !Ref CognitoUserPool
+    Export:
+      Name: !Sub "${ProjectName}-UserPoolId"
+
+  UserPoolClientId:
+    Description: The ID of the Cognito User Pool Client.
+    Value: !Ref CognitoUserPoolClient
+    Export:
+      Name: !Sub "${ProjectName}-UserPoolClientId"
+
+  IdentityPoolId:
+    Description: The ID of the Cognito Identity Pool.
+    Value: !Ref CognitoIdentityPool
+    Export:
+      Name: !Sub "${ProjectName}-IdentityPoolId"
+
+  AuthenticatedRoleArn:
+    Description: ARN of the IAM role for authenticated users.
+    Value: !GetAtt CognitoAuthenticatedRole.Arn
+    Export:
+      Name: !Sub "${ProjectName}-AuthenticatedRoleArn"
+
+  UnauthenticatedRoleArn:
+    Description: ARN of the IAM role for unauthenticated users.
+    Value: !GetAtt CognitoUnauthenticatedRole.Arn
+    Export:
+      Name: !Sub "${ProjectName}-UnauthenticatedRoleArn"
+
+  ContentBucketNameOutput:
+    Description: Name of the S3 bucket storing content.
+    Value: !Ref ContentBucketName
+    Export:
+      Name: !Sub "${ProjectName}-ContentBucketName"
