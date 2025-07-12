@@ -1,7 +1,7 @@
-const AWS_REGION = 'YOUR_AWS_REGION';
-const USER_POOL_ID = 'YOUR_COGNITO_USER_POOL_ID';
-const CLIENT_ID = 'YOUR_COGNITO_APP_CLIENT_ID';
-const IDENTITY_POOL_ID = 'YOUR_COGNITO_IDENTITY_POOL_ID';
+const AWS_REGION = 'YOUR_REGION';
+const USER_POOL_ID = 'COGNITO_USER_POOL_ID';
+const CLIENT_ID = 'COGNITO_USER_CLIENT_ID';
+const IDENTITY_POOL_ID = 'COGNITO_IDENTITY_POOL_ID';
 
 AWS.config.region = AWS_REGION;
 AWS.config.credentials = null;
@@ -12,10 +12,14 @@ const poolData = {
 };
 const userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
 
-const s3 = new AWS.S3({
-    apiVersion: '2006-03-01',
-    params: { Bucket: 'YOUR_CONTENT_BUCKET_NAME' }
-});
+
+function createS3Client() {
+    return new AWS.S3({
+        apiVersion: '2006-03-01',
+        params: { Bucket: 'YOUR_CONTENT_BUCKET_NAME' }
+    });
+}
+
 
 const emailInput = document.getElementById('email');
 const passwordInput = document.getElementById('password');
@@ -321,6 +325,7 @@ async function listFiles(prefix, elementToListIn) {
         }
         await AWS.config.credentials.getPromise();
 
+        const s3 = createS3Client();
         const data = await s3.listObjectsV2({ Prefix: prefix }).promise();
         elementToListIn.innerHTML = '';
 
@@ -355,7 +360,7 @@ async function listFiles(prefix, elementToListIn) {
     }
 }
 
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
     if (USER_POOL_ID.includes('YOUR_') || CLIENT_ID.includes('YOUR_') || IDENTITY_POOL_ID.includes('YOUR_')) {
         if (configWarning) {
             configWarning.classList.remove('d-none');
@@ -368,7 +373,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    updateUIBasedOnAuthStatus();
+    await updateUIBasedOnAuthStatus();
 
     if (signupBtn) signupBtn.addEventListener('click', signUp);
     if (loginBtn) loginBtn.addEventListener('click', signIn);
